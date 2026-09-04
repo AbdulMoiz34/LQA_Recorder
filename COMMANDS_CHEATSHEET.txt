@@ -1,0 +1,219 @@
+╔══════════════════════════════════════════════════════════════════════╗
+║                   CHROMEBOOK RECORDER - COMMAND CHEATSHEET           ║
+║                     Quick Reference for Windows CMD                  ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ 1. OPEN CMD (Command Prompt)                                         │
+└──────────────────────────────────────────────────────────────────────┘
+
+   Windows Key + R  →  Type "cmd"  →  Press Enter
+
+   OR
+
+   In File Explorer address bar, type "cmd" and press Enter
+
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ 2. NAVIGATE TO PROJECT                                               │
+└──────────────────────────────────────────────────────────────────────┘
+
+   cd C:\Users\DELL\Desktop\chromebook-recorder
+
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ 3. FIRST TIME SETUP                                                  │
+└──────────────────────────────────────────────────────────────────────┘
+
+   Step 1: Find your laptop IP address
+   ───────────────────────────────────
+   ipconfig
+
+   Look for "IPv4 Address" under your Wi-Fi adapter
+   Example: 192.168.1.20
+
+
+   Step 2: Create HTTPS certificate
+   ─────────────────────────────────
+   setup-certificate.bat
+
+   When prompted, enter your IP address from Step 1
+
+
+   Step 3: Install dependencies (if needed)
+   ────────────────────────────────────────
+   npm install
+
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ 4. START THE SERVER                                                  │
+└──────────────────────────────────────────────────────────────────────┘
+
+   start-server.bat
+
+   OR
+
+   npm start
+
+
+   Expected output:
+   ────────────────
+   ✅ Academy Recorder Server is running!
+   📁 Videos will be stored in: C:\Users\DELL\Desktop\...
+   🌐 Open this URL on your Chromebook:
+      https://192.168.1.XX:3443
+
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ 5. STOP THE SERVER                                                   │
+└──────────────────────────────────────────────────────────────────────┘
+
+   Press:  Ctrl + C
+
+   OR
+
+   Close the CMD window
+
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ 6. CHECK SERVER HEALTH                                               │
+└──────────────────────────────────────────────────────────────────────┘
+
+   curl -k https://localhost:3443/api/health
+
+   Should return:
+   {"ok":true,"storage":"...","time":"2026-08-14T..."}
+
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ 7. VIEW RECORDED FILES                                               │
+└──────────────────────────────────────────────────────────────────────┘
+
+   List all recordings:
+   ────────────────────
+   dir storage /s
+
+   Open storage folder:
+   ────────────────────
+   explorer storage
+
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ 8. TROUBLESHOOTING COMMANDS                                          │
+└──────────────────────────────────────────────────────────────────────┘
+
+   Check Node.js version:
+   ──────────────────────
+   node --version
+
+   Should show: v18.x.x or higher
+
+
+   Check if port 3443 is in use:
+   ─────────────────────────────
+   netstat -ano | findstr :3443
+
+
+   Kill process on port 3443:
+   ──────────────────────────
+   netstat -ano | findstr :3443
+   (Note the PID number)
+   taskkill /PID <number> /F
+
+
+   Test network connectivity from Chromebook:
+   ──────────────────────────────────────────
+   (Run this on Chromebook)
+   ping 192.168.1.XX
+
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ 9. USEFUL FILE OPERATIONS                                            │
+└──────────────────────────────────────────────────────────────────────┘
+
+   Check disk space:
+   ─────────────────
+   dir
+
+   Delete old recordings (CAREFUL!):
+   ─────────────────────────────────
+   rmdir /s storage\academy-01\2026-08-01
+
+   Copy recordings to backup drive:
+   ────────────────────────────────
+   xcopy storage E:\Backup\storage /E /I
+
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ 10. CHANGE STORAGE LOCATION                                          │
+└──────────────────────────────────────────────────────────────────────┘
+
+   Store on different drive (E:):
+   ──────────────────────────────
+   set STORAGE_ROOT=E:\AcademyRecordings
+   npm start
+
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ 11. ACCESS FROM CHROMEBOOK                                           │
+└──────────────────────────────────────────────────────────────────────┘
+
+   Open Chrome browser on Chromebook
+   Go to: https://192.168.1.XX:3443
+
+   (Replace XX with your laptop IP)
+
+   Click "Advanced" → "Proceed to [IP] (unsafe)"
+
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ 12. COMMON ERROR MESSAGES                                            │
+└──────────────────────────────────────────────────────────────────────┘
+
+   "node is not recognized"
+   ────────────────────────
+   → Install Node.js from https://nodejs.org/
+
+
+   "openssl is not recognized"
+   ───────────────────────────
+   → Install Git for Windows from https://git-scm.com/
+
+
+   "Port 3443 is already in use"
+   ─────────────────────────────
+   → Another server is running. Close it first (Ctrl+C)
+
+
+   "Missing HTTPS certificate"
+   ───────────────────────────
+   → Run: setup-certificate.bat
+
+
+   "Cannot access from Chromebook"
+   ───────────────────────────────
+   → Check both devices on same Wi-Fi
+   → Check Windows Firewall (allow Node.js)
+   → Use correct IP address
+
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ QUICK WORKFLOW SUMMARY                                               │
+└──────────────────────────────────────────────────────────────────────┘
+
+   1. Open CMD
+   2. cd C:\Users\DELL\Desktop\chromebook-recorder
+   3. start-server.bat
+   4. Open Chromebook → https://YOUR-IP:3443
+   5. Enter device ID → Start recording
+   6. Stop recording when done
+   7. Press Ctrl+C to stop server
+
+
+╔══════════════════════════════════════════════════════════════════════╗
+║  Need more help? Check these files:                                  ║
+║  • QUICK_START.md       - Detailed getting started guide             ║
+║  • TESTING_GUIDE.md     - Complete testing procedures                ║
+║  • BUG_REPORT_AND_FIXES.md - Technical details and fixes             ║
+║  • README.md            - Project overview                           ║
+╚══════════════════════════════════════════════════════════════════════╝

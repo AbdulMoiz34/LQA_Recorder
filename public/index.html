@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Academy Recorder</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <main class="card">
+    <h1>Academy Recorder (LQA)</h1>
+    <p>Recordings are saved locally AND uploaded to server. Local files can be deleted after successful upload.</p>
+
+    <label>Chromebook / Teacher ID
+      <input id="device" placeholder="academy-01" autocomplete="off" />
+    </label>
+
+    <label class="check"><input id="microphone" type="checkbox" checked /> Record microphone</label>
+
+    <div class="buttons">
+      <button id="start">Start recording</button>
+      <button id="stop" disabled>Stop recording</button>
+    </div>
+
+    <section class="status">
+      <div><span>Status</span><strong id="status">Ready</strong></div>
+      <div><span>Current file time</span><strong id="elapsed">00:00:00</strong></div>
+      <div><span>Segments completed</span><strong id="chunks">0</strong></div>
+      <div><span>Local + Server</span><strong id="pending">Dual Storage</strong></div>
+    </section>
+    <p class="warning">Files save locally (Downloads) AND upload to server automatically. Delete local files from Downloads folder after confirming uploads.</p>
+  </main>
+  <script src="app.js"></script>
+</body>
+
+</html>
