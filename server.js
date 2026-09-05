@@ -9,10 +9,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3443;
 const STORAGE_ROOT = process.env.STORAGE_ROOT || path.join(__dirname, 'storage');
-const UPLOAD_PASSWORD = process.env.UPLOAD_PASSWORD || 'academy2024';
+const TEMP_DIR = path.join(__dirname, 'temp');
 
 // Verify storage is accessible
 fs.mkdirSync(STORAGE_ROOT, { recursive: true });
+fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 try {
   fs.accessSync(STORAGE_ROOT, fs.constants.W_OK);
@@ -23,7 +24,7 @@ try {
   process.exit(1);
 }
 
-const upload = multer({ dest: path.join(__dirname, 'temp') });
+const upload = multer({ dest: TEMP_DIR });
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
@@ -32,49 +33,128 @@ function safe(value = '') {
   return String(value).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
 }
 
-// Authentication middleware for upload endpoints
-app.use('/api/upload', (req, res, next) => {
-  const password = req.headers['x-upload-password'] || req.query.password;
-  
-  if (password !== UPLOAD_PASSWORD) {
-    console.log(`❌ Unauthorized upload attempt from ${req.ip}`);
-    return res.status(401).json({ 
-      ok: false, 
-      error: 'Unauthorized. Please contact administrator.' 
-    });
-  }
-  
-  next();
-});
-
-app.post('/api/upload', upload.single('recording'), async (req, res) => {
+// Upload chunk (5-second segments streaming in real-time)
+app.post('/api/upload-chunk', upload.single('chunk'), async (req, res) => {
   try {
-    const { device, session } = req.body;
+    const { device, session, segment, sequence } = req.body;
     const file = req.file;
-    
+
     if (!file) {
-      return res.status(400).json({ ok: false, error: 'No file uploaded' });
+      return res.status(400).json({ ok: false, error: 'No chunk uploaded' });
     }
 
     const safeDevice = safe(device);
-    const date = session?.slice(0, 10) || new Date().toISOString().slice(0, 10);
-    const dir = path.join(STORAGE_ROOT, safeDevice, date);
-    fs.mkdirSync(dir, { recursive: true });
+    const safeSession = safe(session);
+    const safeSegment = safe(segment);
     
-    const finalPath = path.join(dir, file.originalname);
-    fs.renameSync(file.path, finalPath);
+    // Create directory for this segment's chunks
+    const segmentDir = path.join(TEMP_DIR, safeDevice, safeSession, safeSegment);
+    fs.mkdirSync(segmentDir, { recursive: true });
+
+    // Save chunk with padded sequence number for proper sorting
+    const chunkPath = path.join(segmentDir, `chunk-${String(sequence).padStart(6, '0')}.webm`);
+    fs.renameSync(file.path, chunkPath);
+
+    console.log(`📦 Chunk ${sequence} from ${safeDevice} (${(file.size / 1024).toFixed(0)} KB)`);
     
-    console.log(`✅ Uploaded: ${file.originalname} (${(file.size / (1024 ** 2)).toFixed(2)} MB)`);
-    res.json({ ok: true, file: finalPath });
-    
+    res.json({ ok: true, sequence: parseInt(sequence) });
+
   } catch (error) {
-    console.error('❌ Upload error:', error);
-    res.status(500).json({ ok: false, error: 'Upload failed' });
+    console.error('❌ Chunk upload error:', error);
+    res.status(500).json({ ok: false, error: 'Chunk upload failed' });
+  }
+});
+
+// Finalize segment: merge all chunks into final video file
+app.post('/api/finalize-segment', async (req, res) => {
+  try {
+    const { device, session, segment } = req.body;
+
+    const safeDevice = safe(device);
+    const safeSession = safe(session);
+    const safeSegment = safe(segment);
+
+    const segmentDir = path.join(TEMP_DIR, safeDevice, safeSession, safeSegment);
+
+    if (!fs.existsSync(segmentDir)) {
+      return res.status(400).json({ ok: false, error: 'No chunks found for segment' });
+    }
+
+    // Get all chunks and sort by sequence
+    const chunks = fs.readdirSync(segmentDir)
+      .filter(f => f.startsWith('chunk-') && f.endsWith('.webm'))
+      .sort();
+
+    if (chunks.length === 0) {
+      return res.status(400).json({ ok: false, error: 'No chunks to merge' });
+    }
+
+    // Create final storage directory
+    const date = safeSession.slice(0, 10);
+    const finalDir = path.join(STORAGE_ROOT, safeDevice, date);
+    fs.mkdirSync(finalDir, { recursive: true });
+
+    // Final video filename
+    const finalFilename = `${safeDevice}__${safeSegment}.webm`;
+    const finalPath = path.join(finalDir, finalFilename);
+
+    // Merge all chunks into single file
+    const writeStream = fs.createWriteStream(finalPath);
+    
+    for (const chunkFile of chunks) {
+      const chunkPath = path.join(segmentDir, chunkFile);
+      const chunkData = fs.readFileSync(chunkPath);
+      writeStream.write(chunkData);
+    }
+
+    writeStream.end();
+
+    await new Promise((resolve, reject) => {
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+
+    // Get final file stats
+    const stats = fs.statSync(finalPath);
+    const sizeMB = (stats.size / (1024 ** 2)).toFixed(2);
+
+    // Cleanup: delete temporary chunks
+    for (const chunkFile of chunks) {
+      fs.unlinkSync(path.join(segmentDir, chunkFile));
+    }
+    
+    // Remove empty directories
+    try {
+      fs.rmdirSync(segmentDir);
+      fs.rmdirSync(path.join(TEMP_DIR, safeDevice, safeSession));
+      fs.rmdirSync(path.join(TEMP_DIR, safeDevice));
+    } catch (e) {
+      // Ignore if directories not empty
+    }
+
+    console.log(`✅ Finalized: ${finalFilename} (${sizeMB} MB from ${chunks.length} chunks)`);
+    
+    res.json({ 
+      ok: true, 
+      file: finalPath,
+      filename: finalFilename,
+      chunks: chunks.length,
+      sizeMB: parseFloat(sizeMB)
+    });
+
+  } catch (error) {
+    console.error('❌ Finalize error:', error);
+    res.status(500).json({ ok: false, error: 'Finalization failed' });
   }
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, storage: STORAGE_ROOT, time: new Date().toISOString() });
+  res.json({ 
+    ok: true, 
+    storage: STORAGE_ROOT, 
+    time: new Date().toISOString(),
+    mode: 'chunked-streaming'
+  });
 });
 
 // Storage information endpoint for admin dashboard
@@ -83,15 +163,15 @@ app.get('/api/storage-info', (_req, res) => {
     // Count recordings and calculate total size
     let totalFiles = 0;
     let totalSize = 0;
-    
+
     function scanDirectory(dir) {
       if (!fs.existsSync(dir)) return;
-      
+
       const entries = fs.readdirSync(dir, { withFileTypes: true });
-      
+
       for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
-        
+
         if (entry.isDirectory()) {
           scanDirectory(fullPath);
         } else if (entry.isFile() && entry.name.endsWith('.webm')) {
@@ -100,9 +180,9 @@ app.get('/api/storage-info', (_req, res) => {
         }
       }
     }
-    
+
     scanDirectory(STORAGE_ROOT);
-    
+
     res.json({
       ok: true,
       storage: STORAGE_ROOT,

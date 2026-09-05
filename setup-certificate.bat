@@ -6,7 +6,7 @@ if errorlevel 1 (
   exit /b 1
 )
 if not exist certs mkdir certs
-set /p IP=Enter this laptop's LAN IPv4 address, for example 192.168.1.20: 
+set /p IP=172.22.176.1: 
 openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -keyout certs\server-key.pem -out certs\server-cert.pem -subj "/CN=%IP%" -addext "subjectAltName=IP:%IP%"
 echo Certificate created.
 pause

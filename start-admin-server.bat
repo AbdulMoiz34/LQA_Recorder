@@ -8,29 +8,28 @@ cd /d %~dp0
 
 REM Configure external HDD storage
 REM CHANGE THIS to your external drive letter and folder
-set STORAGE_ROOT=E:\AcademyRecordings
-
-REM CHANGE THIS password for security!
-set UPLOAD_PASSWORD=academy2024
+set STORAGE_ROOT=D:\AdminRecordings
 
 REM Server port
 set PORT=3443
 
-echo.
 echo Configuration:
 echo ===============
 echo Storage: %STORAGE_ROOT%
-echo Password: %UPLOAD_PASSWORD%
 echo Port: %PORT%
 echo.
 
-REM Check if external drive exists
-if not exist E:\ (
+REM Check if storage path exists
+if not exist "%STORAGE_ROOT%\.." (
   echo.
-  echo ❌ ERROR: External HDD (E:\) not connected!
+  echo ❌ ERROR: Storage drive not accessible!
   echo.
-  echo Please connect the 1TB external hard disk to continue.
-  echo After connecting, press any key to retry...
+  echo Please check:
+  echo 1. External drive is connected
+  echo 2. Drive letter is correct in this script
+  echo 3. You have write permissions
+  echo.
+  echo After fixing, press any key to retry...
   pause
   goto :eof
 )

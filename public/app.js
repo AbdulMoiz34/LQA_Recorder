@@ -1,5 +1,6 @@
-const SEGMENT_MS = 30 * 60 * 1000;
-const UPLOAD_PASSWORD = 'CHANGE_ME_IN_PRODUCTION';
+const SEGMENT_MS = 30 * 60 * 1000; // 30 minutes
+const CHUNK_INTERVAL_MS = 5000; // 5 seconds per chunk
+const MAX_RETRY_ATTEMPTS = 3;
 
 const el = id => document.getElementById(id);
 
@@ -10,6 +11,7 @@ if (window.location.protocol !== 'https:' && window.location.hostname !== 'local
 
 const startBtn = el('start');
 const stopBtn = el('stop');
+const deviceInput = el('device');
 let recorder;
 let stream;
 let segmentTimer;
@@ -17,11 +19,27 @@ let clockTimer;
 let segmentStartedAt;
 let sessionId;
 let segmentId;
-let recordedChunks = [];
+let chunkSequence = 0;
 let stopping = false;
+let uploadQueue = [];
+let isUploading = false;
 let displayStream = null;
 let microphoneStream = null;
 let audioContext = null;
+
+// Auto-load saved device ID
+const savedDeviceId = localStorage.getItem('deviceId');
+if (savedDeviceId) {
+  deviceInput.value = savedDeviceId;
+}
+
+// Auto-save device ID when changed
+deviceInput.addEventListener('input', () => {
+  const deviceId = deviceInput.value.trim();
+  if (deviceId) {
+    localStorage.setItem('deviceId', deviceId);
+  }
+});
 
 function stamp(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, '-');
@@ -48,30 +66,92 @@ function chooseMimeType() {
   return options.find(type => MediaRecorder.isTypeSupported(type)) || '';
 }
 
-function downloadRecording(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.style.display = 'none';
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, 100);
+async function uploadChunkToServer(blob, sequence, retryCount = 0) {
+  const device = el('device').value.trim();
+  const formData = new FormData();
+  
+  formData.append('chunk', blob, `chunk-${sequence}.webm`);
+  formData.append('device', device);
+  formData.append('session', sessionId);
+  formData.append('segment', segmentId);
+  formData.append('sequence', sequence);
+  
+  try {
+    const response = await fetch('/api/upload-chunk', {
+      method: 'POST',
+      body: formData
+    });
+    
+    const result = await response.json();
+    
+    if (!result.ok) {
+      throw new Error(result.error || 'Upload failed');
+    }
+    
+    return result;
+  } catch (error) {
+    if (retryCount < MAX_RETRY_ATTEMPTS) {
+      console.log(`Chunk ${sequence} failed, retrying (${retryCount + 1}/${MAX_RETRY_ATTEMPTS})...`);
+      await new Promise(resolve => setTimeout(resolve, 2000 * (retryCount + 1)));
+      return uploadChunkToServer(blob, sequence, retryCount + 1);
+    }
+    throw error;
+  }
+}
+
+async function processUploadQueue() {
+  if (isUploading || uploadQueue.length === 0) return;
+  
+  isUploading = true;
+  
+  while (uploadQueue.length > 0) {
+    const { blob, sequence } = uploadQueue[0];
+    
+    try {
+      await uploadChunkToServer(blob, sequence);
+      uploadQueue.shift();
+      
+      // Update UI
+      const uploaded = parseInt(el('chunks').textContent || '0') + 1;
+      el('chunks').textContent = uploaded;
+      el('pending').textContent = `${uploadQueue.length} chunks queued`;
+      
+      console.log(`✅ Chunk ${sequence} uploaded (queue: ${uploadQueue.length})`);
+    } catch (error) {
+      console.error(`❌ Chunk ${sequence} upload failed after retries:`, error);
+      el('pending').textContent = `Upload error! ${uploadQueue.length} pending`;
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      break;
+    }
+  }
+  
+  isUploading = false;
+  
+  if (uploadQueue.length > 0) {
+    setTimeout(processUploadQueue, 1000);
+  } else {
+    el('pending').textContent = 'All chunks uploaded';
+  }
 }
 
 function startSegment() {
-  recordedChunks = [];
+  chunkSequence = 0;
   segmentStartedAt = Date.now();
   segmentId = `${stamp()}__30min`;
+  
   const mimeType = chooseMimeType();
   recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 1800000 } : undefined);
 
   recorder.ondataavailable = event => {
     if (event.data && event.data.size > 0) {
-      recordedChunks.push(event.data);
+      // Add chunk to upload queue immediately
+      uploadQueue.push({ 
+        blob: event.data, 
+        sequence: chunkSequence++ 
+      });
+      
+      // Start processing queue
+      processUploadQueue();
     }
   };
   
@@ -80,77 +160,77 @@ function startSegment() {
     console.error(event.error);
   };
   
-  recorder.onstop = () => {
-    if (recordedChunks.length > 0 && !stopping) {
-      saveSegment();
+  recorder.onstop = async () => {
+    if (!stopping) {
+      // Wait for queue to clear before finalizing
+      await waitForQueueEmpty();
+      await finalizeSegment();
       startSegment();
     }
   };
 
-  recorder.start(1000);
-  setStatus('Recording...');
+  // Record in 5-second chunks
+  recorder.start(CHUNK_INTERVAL_MS);
+  setStatus('Recording & streaming...');
+  
   clearInterval(clockTimer);
   clockTimer = setInterval(updateClock, 1000);
+  
   clearTimeout(segmentTimer);
   segmentTimer = setTimeout(() => {
     if (recorder?.state === 'recording') recorder.stop();
   }, SEGMENT_MS);
 }
 
-async function saveSegment() {
-  if (recordedChunks.length === 0) return;
+async function waitForQueueEmpty() {
+  let attempts = 0;
+  const maxAttempts = 60; // Wait up to 60 seconds
   
-  const device = el('device').value.trim();
-  const blob = new Blob(recordedChunks, { type: chooseMimeType() });
-  const filename = `${device}_${sessionId}_${segmentId}.webm`;
-  
-  setStatus('Saving segment locally...');
-  downloadRecording(blob, filename);
-  console.log(`✅ Saved locally: ${filename} (${(blob.size / (1024 ** 2)).toFixed(2)} MB)`);
-  
-  setStatus('Uploading to server...');
-  
-  try {
-    await uploadToServer(blob, filename);
-    console.log(`✅ Uploaded to server: ${filename}`);
-    setStatus('Recording... (Saved & Uploaded)');
-    el('chunks').textContent = parseInt(el('chunks').textContent || '0') + 1;
-  } catch (error) {
-    console.error('❌ Upload failed:', error);
-    setStatus('⚠️ Saved locally, upload failed');
-    alert(
-      '⚠️ Upload to server failed, but recording is saved in Downloads folder.\n\n' +
-      'File: ' + filename + '\n\n' +
-      'Recording will continue. You can manually upload later or wait for retry.'
-    );
+  while (uploadQueue.length > 0 && attempts < maxAttempts) {
+    console.log(`Waiting for queue to clear... ${uploadQueue.length} chunks remaining`);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    attempts++;
   }
   
-  recordedChunks = [];
+  if (uploadQueue.length > 0) {
+    console.warn(`Queue not empty after ${maxAttempts}s, ${uploadQueue.length} chunks may be lost`);
+  }
 }
 
-async function uploadToServer(blob, filename) {
+async function finalizeSegment() {
   const device = el('device').value.trim();
   
-  const formData = new FormData();
-  formData.append('recording', blob, filename);
-  formData.append('device', device);
-  formData.append('session', sessionId);
-  
-  const response = await fetch('/api/upload', {
-    method: 'POST',
-    headers: {
-      'X-Upload-Password': UPLOAD_PASSWORD
-    },
-    body: formData
-  });
-  
-  const result = await response.json();
-  
-  if (!result.ok) {
-    throw new Error(result.error || 'Upload failed');
+  try {
+    setStatus('Finalizing segment...');
+    
+    const response = await fetch('/api/finalize-segment', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        device,
+        session: sessionId,
+        segment: segmentId
+      })
+    });
+    
+    const result = await response.json();
+    
+    if (result.ok) {
+      console.log(`✅ Segment finalized: ${result.filename} (${result.sizeMB} MB from ${result.chunks} chunks)`);
+      setStatus('Segment saved to server');
+      
+      // Reset chunk counter for next segment
+      el('chunks').textContent = '0';
+    } else {
+      console.error('❌ Finalize failed:', result.error);
+      setStatus('Finalize error');
+    }
+  } catch (error) {
+    console.error('❌ Finalize error:', error);
+    setStatus('Finalize error');
   }
-  
-  return result;
 }
 
 startBtn.addEventListener('click', async () => {
@@ -164,6 +244,7 @@ startBtn.addEventListener('click', async () => {
   try {
     stopping = false;
     sessionId = `${new Date().toISOString().slice(0, 10)}_${stamp()}`;
+    uploadQueue = [];
 
     displayStream = await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: 15 },
@@ -280,6 +361,8 @@ async function stopRecording() {
   if (stopping) return;
 
   stopping = true;
+  setStatus('Stopping...');
+  
   clearTimeout(segmentTimer);
   clearInterval(clockTimer);
 
@@ -288,8 +371,12 @@ async function stopRecording() {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 
-  if (recordedChunks.length > 0) {
-    await saveSegment();
+  // Wait for all chunks to upload
+  await waitForQueueEmpty();
+  
+  // Finalize the last segment
+  if (chunkSequence > 0) {
+    await finalizeSegment();
   }
 
   await cleanupAudioStreams();
@@ -298,8 +385,7 @@ async function stopRecording() {
   stopBtn.disabled = true;
   el('device').disabled = false;
 
-  const count = el('chunks').textContent;
-  setStatus(`Stopped - ${count} segment(s) saved`);
+  setStatus('Stopped - all segments saved');
 }
 
 stopBtn.addEventListener('click', stopRecording);
