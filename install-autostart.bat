@@ -11,8 +11,8 @@ set "PROJECT_DIR=%~dp0"
 echo Creating auto-start task...
 echo.
 
-REM Create Task Scheduler task to run at startup
-schtasks /create /tn "AcademyRecorderServer" /tr "\"%PROJECT_DIR%start-admin-server.bat\"" /sc onlogon /rl highest /f
+REM Create Task Scheduler task to run at startup (in background)
+schtasks /create /tn "AcademyRecorderServer" /tr "\"%PROJECT_DIR%start-background.bat\"" /sc onlogon /rl highest /f
 
 if %errorlevel% equ 0 (
     echo.
