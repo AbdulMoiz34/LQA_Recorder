@@ -24,9 +24,9 @@ function sanitize(value = '') {
   return String(value).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
 }
 
-app.post('/api/upload-video', upload.single('video'), async (req, res) => {
+app.post('/api/upload-segment', upload.single('video'), async (req, res) => {
   try {
-    const { device, session } = req.body;
+    const { device, session, segment } = req.body;
     const file = req.file;
 
     if (!file) {
@@ -34,10 +34,11 @@ app.post('/api/upload-video', upload.single('video'), async (req, res) => {
     }
 
     const date = new Date().toISOString().slice(0, 10);
-    const finalDir = path.join(STORAGE_ROOT, sanitize(device), date);
+    const finalDir = path.join(STORAGE_ROOT, sanitize(device), date, sanitize(session));
     fs.mkdirSync(finalDir, { recursive: true });
 
-    const finalFilename = `${sanitize(device)}__${sanitize(session)}.webm`;
+    const ext = file.originalname.endsWith('.mp4') ? 'mp4' : 'webm';
+    const finalFilename = `segment-${String(segment).padStart(3, '0')}.${ext}`;
     const finalPath = path.join(finalDir, finalFilename);
     
     fs.renameSync(file.path, finalPath);
@@ -45,7 +46,7 @@ app.post('/api/upload-video', upload.single('video'), async (req, res) => {
     const stats = fs.statSync(finalPath);
     const sizeMB = (stats.size / (1024 ** 2)).toFixed(2);
 
-    console.log(`✅ ${finalFilename} (${sizeMB}MB)`);
+    console.log(`✅ ${sanitize(device)}/${date}/${sanitize(session)}/${finalFilename} (${sizeMB}MB)`);
     
     res.json({ 
       ok: true, 
