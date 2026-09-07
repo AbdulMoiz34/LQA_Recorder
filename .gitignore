@@ -55,3 +55,7 @@ tmp/
 
 # Test files
 test-recordings/
+
+# Server logs
+server.log
+error.log

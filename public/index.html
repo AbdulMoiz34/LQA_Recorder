@@ -1,19 +1,17 @@
 <!doctype html>
 <html lang="en">
-
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Academy Recorder</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
-
 <body>
   <main class="card">
     <h1>Academy Recorder</h1>
     <label>Chromebook / Teacher ID
       <input id="device" placeholder="academy-01" autocomplete="off" />
-      <small style="color: #666; font-size: 0.85em;">First time only - your ID will be remembered</small>
+      <small style="color: #666; font-size: 0.85em;">First time only - auto-saved</small>
     </label>
 
     <label class="check"><input id="microphone" type="checkbox" checked /> Record microphone</label>
@@ -30,7 +28,7 @@
       <div><span>Upload queue</span><strong id="pending">0 chunks queued</strong></div>
     </section>
   </main>
+  <script src="https://cdn.webrtc-experiment.com/RecordRTC.js"></script>
   <script src="app.js"></script>
 </body>
-
 </html>

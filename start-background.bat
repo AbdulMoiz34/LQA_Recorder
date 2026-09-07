@@ -47,11 +47,11 @@ if not exist node_modules (
   echo.
 )
 
-echo Starting server in BACKGROUND...
+echo Starting server in BACKGROUND with logging...
 echo.
 
-REM Start server in background using PowerShell
-powershell -Command "Start-Process -WindowStyle Hidden -FilePath 'node' -ArgumentList 'server.js'"
+REM Start server in background with logs
+powershell -Command "Start-Process -WindowStyle Hidden -FilePath 'node' -ArgumentList 'server.js' -RedirectStandardOutput 'server.log' -RedirectStandardError 'error.log'"
 
 timeout /t 3 /nobreak >nul
 
