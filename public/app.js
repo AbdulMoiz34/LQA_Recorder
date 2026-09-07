@@ -1,20 +1,21 @@
-const CONFIG = {
-  SEGMENT_DURATION_MS: 30 * 60 * 1000, // 30 minutes
-  DEVICE_ID_PATTERN: /^[a-zA-Z0-9_-]{2,40}$/
-};
+import { CLIENT_CONFIG, getSegmentDurationMs, formatDuration } from './config.js';
 
-class RecordingApp {
+class ContinuousRecorder {
   constructor() {
     this.el = id => document.getElementById(id);
     this.recorder = null;
     this.stream = null;
+    this.audioContext = null;
     this.sessionId = null;
     this.segmentNumber = 0;
-    this.stopping = false;
     this.startTime = null;
     this.clockTimer = null;
     this.segmentTimer = null;
     this.recordedChunks = [];
+    this.isRecording = false;
+    this.uploadQueue = [];
+    this.isUploading = false;
+    this.currentMimeType = null;
 
     this.init();
   }
@@ -25,26 +26,27 @@ class RecordingApp {
     }
 
     const saved = localStorage.getItem('deviceId');
-    if (saved && CONFIG.DEVICE_ID_PATTERN.test(saved)) {
+    if (saved && CLIENT_CONFIG.DEVICE_ID_PATTERN.test(saved)) {
       this.el('device').value = saved;
     }
 
     this.el('device').addEventListener('input', () => {
       const id = this.el('device').value.trim();
-      if (id && CONFIG.DEVICE_ID_PATTERN.test(id)) {
+      if (id && CLIENT_CONFIG.DEVICE_ID_PATTERN.test(id)) {
         localStorage.setItem('deviceId', id);
       }
     });
 
     this.el('start').addEventListener('click', () => this.startRecording());
-    this.el('stop').addEventListener('click', () => this.stopRecording());
     
     window.addEventListener('beforeunload', (e) => {
-      if (this.recorder && !this.stopping) {
+      if (this.isRecording) {
         e.preventDefault();
-        e.returnValue = '';
+        e.returnValue = 'Recording in progress. Are you sure you want to close?';
       }
     });
+
+    this.updateQueueDisplay();
   }
 
   setStatus(text) {
@@ -52,30 +54,131 @@ class RecordingApp {
   }
 
   updateClock() {
-    const seconds = Math.floor((Date.now() - this.startTime) / 1000);
-    const h = String(Math.floor(seconds / 3600)).padStart(2, '0');
-    const m = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
-    const s = String(seconds % 60).padStart(2, '0');
-    this.el('elapsed').textContent = `${h}:${m}:${s}`;
+    const elapsed = Date.now() - this.startTime;
+    this.el('elapsed').textContent = formatDuration(elapsed);
+    
+    const segmentElapsed = elapsed % getSegmentDurationMs();
+    const remaining = getSegmentDurationMs() - segmentElapsed;
+    const segmentTime = formatDuration(segmentElapsed);
+    this.el('pending').textContent = `${segmentTime} (saving in ${Math.ceil(remaining / 1000)}s)`;
+  }
+
+  updateQueueDisplay(progress = null) {
+    const queueCount = this.uploadQueue.length;
+    let displayText = `${queueCount} pending`;
+    
+    if (this.isUploading) {
+      if (progress !== null) {
+        displayText += ` (uploading ${progress}%)`;
+      } else {
+        displayText += ` (uploading...)`;
+      }
+    }
+    
+    this.el('queue').textContent = displayText;
   }
 
   async uploadSegment(blob, segmentNum) {
     const device = this.el('device').value.trim();
     const formData = new FormData();
     
-    formData.append('video', blob, `segment-${segmentNum}.mp4`);
+    const ext = this.currentMimeType.includes('mp4') ? 'mp4' : 'webm';
+    formData.append('video', blob, `segment-${segmentNum}.${ext}`);
     formData.append('device', device);
     formData.append('session', this.sessionId);
     formData.append('segment', segmentNum);
     
-    this.el('pending').textContent = `Uploading ${(blob.size / (1024 * 1024)).toFixed(1)}MB...`;
+    let lastError = null;
     
-    const response = await fetch('/api/upload-segment', {
-      method: 'POST',
-      body: formData
+    for (let attempt = 1; attempt <= CLIENT_CONFIG.MAX_RETRIES; attempt++) {
+      try {
+        const result = await this.uploadWithProgress(formData);
+        console.log(`✅ Segment ${segmentNum} uploaded: ${result.filename} (${result.sizeMB}MB)`);
+        return result;
+        
+      } catch (error) {
+        lastError = error;
+        console.warn(`Upload attempt ${attempt}/${CLIENT_CONFIG.MAX_RETRIES} failed:`, error.message);
+        
+        if (attempt < CLIENT_CONFIG.MAX_RETRIES) {
+          const delay = CLIENT_CONFIG.RETRY_DELAY_MS * Math.pow(CLIENT_CONFIG.RETRY_BACKOFF_MULTIPLIER, attempt - 1);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+    
+    throw lastError;
+  }
+
+  uploadWithProgress(formData) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      
+      // Track upload progress
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const percentComplete = Math.round((e.loaded / e.total) * 100);
+          this.updateQueueDisplay(percentComplete);
+        }
+      });
+      
+      // Handle completion
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const result = JSON.parse(xhr.responseText);
+            resolve(result);
+          } catch (e) {
+            reject(new Error('Invalid response from server'));
+          }
+        } else {
+          reject(new Error(`Upload failed: ${xhr.status}`));
+        }
+      });
+      
+      // Handle errors
+      xhr.addEventListener('error', () => {
+        reject(new Error('Network error during upload'));
+      });
+      
+      xhr.addEventListener('abort', () => {
+        reject(new Error('Upload aborted'));
+      });
+      
+      // Send request
+      xhr.open('POST', '/api/upload-segment');
+      xhr.send(formData);
     });
+  }
+
+  async processUploadQueue() {
+    if (this.isUploading || this.uploadQueue.length === 0) return;
     
-    return response.json();
+    this.isUploading = true;
+    this.updateQueueDisplay();
+    
+    while (this.uploadQueue.length > 0) {
+      const item = this.uploadQueue[0];
+      
+      try {
+        await this.uploadSegment(item.blob, item.segmentNum);
+        this.uploadQueue.shift();
+      } catch (error) {
+        console.error(`❌ Segment ${item.segmentNum} upload failed permanently:`, error);
+        this.uploadQueue.shift();
+      }
+      
+      this.updateQueueDisplay();
+    }
+    
+    this.isUploading = false;
+    this.updateQueueDisplay();
+  }
+
+  queueUpload(blob, segmentNum) {
+    this.uploadQueue.push({ blob, segmentNum });
+    this.updateQueueDisplay();
+    this.processUploadQueue();
   }
 
   startSegment() {
@@ -85,8 +188,10 @@ class RecordingApp {
     
     if (!MediaRecorder.isTypeSupported(mimeType)) {
       mimeType = 'video/webm;codecs=vp8,opus';
-      console.warn('MP4 not supported, falling back to WebM');
+      console.warn('MP4 not supported, using WebM');
     }
+
+    this.currentMimeType = mimeType;
 
     const options = {
       mimeType: mimeType,
@@ -101,49 +206,42 @@ class RecordingApp {
       }
     };
 
-    this.recorder.onstop = async () => {
-      if (!this.stopping && this.recordedChunks.length > 0) {
-        const blob = new Blob(this.recordedChunks, { type: mimeType });
-        console.log(`Segment ${this.segmentNumber} complete: ${(blob.size / (1024 * 1024)).toFixed(2)}MB`);
+    this.recorder.onstop = () => {
+      if (this.isRecording && this.recordedChunks.length > 0) {
+        const blob = new Blob(this.recordedChunks, { type: this.currentMimeType });
+        const sizeMB = (blob.size / (1024 * 1024)).toFixed(2);
+        console.log(`📦 Segment ${this.segmentNumber} complete: ${sizeMB}MB`);
         
-        try {
-          const result = await this.uploadSegment(blob, this.segmentNumber);
-          if (result.ok) {
-            this.segmentNumber++;
-            this.el('segments').textContent = this.segmentNumber;
-            this.el('pending').textContent = 'Uploaded';
-            console.log(`✅ Saved: ${result.filename}`);
-          }
-        } catch (error) {
-          console.error('Upload error:', error);
-          this.el('pending').textContent = 'Upload failed';
+        this.queueUpload(blob, this.segmentNumber);
+        
+        this.segmentNumber++;
+        this.el('segments').textContent = this.segmentNumber;
+        
+        if (this.isRecording) {
+          this.startSegment();
         }
-
-        this.startSegment();
       }
     };
 
     this.recorder.start();
-    this.setStatus('Recording...');
-    this.el('pending').textContent = `Recording segment ${this.segmentNumber + 1}`;
-
+    
     this.segmentTimer = setTimeout(() => {
       if (this.recorder && this.recorder.state === 'recording') {
         this.recorder.stop();
       }
-    }, CONFIG.SEGMENT_DURATION_MS);
+    }, getSegmentDurationMs());
   }
 
   async startRecording() {
     const device = this.el('device').value.trim();
 
-    if (!CONFIG.DEVICE_ID_PATTERN.test(device)) {
+    if (!CLIENT_CONFIG.DEVICE_ID_PATTERN.test(device)) {
       alert('Enter a valid device ID (e.g., academy-01)');
       return;
     }
 
     try {
-      this.stopping = false;
+      this.isRecording = true;
       this.segmentNumber = 0;
       this.sessionId = new Date().toISOString().replace(/[:.]/g, '-');
       this.startTime = Date.now();
@@ -172,14 +270,14 @@ class RecordingApp {
 
       if (audioTracks.length > 0 || micTracks.length > 0) {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
-        const audioContext = new AudioContext();
-        const destination = audioContext.createMediaStreamDestination();
+        this.audioContext = new AudioContext();
+        const destination = this.audioContext.createMediaStreamDestination();
 
         if (audioTracks.length > 0) {
-          audioContext.createMediaStreamSource(new MediaStream(audioTracks)).connect(destination);
+          this.audioContext.createMediaStreamSource(new MediaStream(audioTracks)).connect(destination);
         }
         if (micTracks.length > 0) {
-          audioContext.createMediaStreamSource(new MediaStream(micTracks)).connect(destination);
+          this.audioContext.createMediaStreamSource(new MediaStream(micTracks)).connect(destination);
         }
 
         finalTracks.push(...destination.stream.getAudioTracks());
@@ -190,49 +288,38 @@ class RecordingApp {
       videoTracks[0].addEventListener('ended', () => this.stopRecording());
 
       this.el('start').disabled = true;
-      this.el('stop').disabled = false;
       this.el('device').disabled = true;
+      this.el('microphone').disabled = true;
       this.el('segments').textContent = '0';
+      this.clockTimer = setInterval(() => this.updateClock(), CLIENT_CONFIG.CLOCK_UPDATE_INTERVAL_MS);
 
-      this.clockTimer = setInterval(() => this.updateClock(), 1000);
-
-      // Start first segment
+      this.setStatus('Recording...');
       this.startSegment();
 
     } catch (error) {
       this.setStatus('Permission denied');
+      this.isRecording = false;
       console.error(error);
     }
   }
 
-  async stopRecording() {
-    if (this.stopping) return;
+  stopRecording() {
+    if (!this.isRecording) return;
 
-    this.stopping = true;
-    this.setStatus('Stopping...');
+    console.log('🛑 Stopping recording...');
+    this.isRecording = false;
+    this.setStatus('Stopped');
     
     clearInterval(this.clockTimer);
     clearTimeout(this.segmentTimer);
 
     if (this.recorder && this.recorder.state === 'recording') {
       this.recorder.stop();
-      
-      // Wait for final segment to upload
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      if (this.recordedChunks.length > 0) {
-        const mimeType = this.recorder.mimeType || 'video/mp4';
-        const blob = new Blob(this.recordedChunks, { type: mimeType });
-        try {
-          const result = await this.uploadSegment(blob, this.segmentNumber);
-          if (result.ok) {
-            this.segmentNumber++;
-            this.el('segments').textContent = this.segmentNumber;
-          }
-        } catch (error) {
-          console.error('Final upload error:', error);
-        }
-      }
+    }
+
+    if (this.audioContext) {
+      this.audioContext.close();
+      this.audioContext = null;
     }
 
     this.stream?.getTracks().forEach(track => track.stop());
@@ -240,11 +327,10 @@ class RecordingApp {
     this.recorder = null;
 
     this.el('start').disabled = false;
-    this.el('stop').disabled = true;
     this.el('device').disabled = false;
-    this.setStatus('Stopped');
-    this.el('pending').textContent = `${this.segmentNumber} segments saved`;
+    this.el('microphone').disabled = false;
+    this.el('pending').textContent = 'Stopped';
   }
 }
 
-new RecordingApp();
+new ContinuousRecorder();

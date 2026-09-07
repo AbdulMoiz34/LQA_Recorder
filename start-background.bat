@@ -6,15 +6,20 @@ echo ========================================
 
 cd /d %~dp0
 
-REM Configure storage and port
+REM Configure storage, port, and segment duration
 set STORAGE_ROOT=D:\AdminRecordings
 set PORT=3443
+set SEGMENT_DURATION_MINUTES=2
 
 echo.
 echo Configuration:
 echo ===============
 echo Storage: %STORAGE_ROOT%
 echo Port: %PORT%
+echo Segment Duration: %SEGMENT_DURATION_MINUTES% minutes
+echo.
+echo NOTE: For production, set SEGMENT_DURATION_MINUTES=30
+echo       Or edit public\config.js line 6
 echo.
 
 REM Check if storage path exists
@@ -63,10 +68,9 @@ echo.
 echo 📡 Server is running at:
 echo    https://YOUR-IP-ADDRESS:%PORT%
 echo.
-echo 📊 Admin Dashboard:
-echo    https://YOUR-IP-ADDRESS:%PORT%/admin.html
-echo.
 echo 💡 Find your IP: ipconfig
+echo.
+echo ⏱️  Recording segments: %SEGMENT_DURATION_MINUTES% minutes each
 echo.
 echo ✅ You can now close this window!
 echo    Server will keep running in background.

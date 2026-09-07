@@ -1,11 +1,13 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Academy Recorder</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
+
 <body>
   <main class="card">
     <h1>Academy Recorder</h1>
@@ -17,17 +19,18 @@
     <label class="check"><input id="microphone" type="checkbox" checked /> Record microphone</label>
 
     <div class="buttons">
-      <button id="start">Start recording</button>
-      <button id="stop" disabled>Stop recording</button>
+      <button id="start">Start Recording</button>
     </div>
 
     <section class="status">
       <div><span>Status</span><strong id="status">Ready</strong></div>
-      <div><span>Recording time</span><strong id="elapsed">00:00:00</strong></div>
+      <div><span>Total time</span><strong id="elapsed">00:00:00</strong></div>
       <div><span>Segments saved</span><strong id="segments">0</strong></div>
       <div><span>Current segment</span><strong id="pending">Ready</strong></div>
+      <div><span>Upload queue</span><strong id="queue">0 pending</strong></div>
     </section>
   </main>
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
+
 </html>
