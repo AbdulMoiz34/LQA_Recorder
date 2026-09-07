@@ -195,7 +195,8 @@ class ContinuousRecorder {
 
     const options = {
       mimeType: mimeType,
-      videoBitsPerSecond: 2500000
+      videoBitsPerSecond: 2500000,  // 2.5 Mbps video (current)
+      audioBitsPerSecond: 192000     // 192 kbps audio (high quality)
     };
 
     this.recorder = new MediaRecorder(this.stream, options);
@@ -248,7 +249,12 @@ class ContinuousRecorder {
 
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 30 },
-        audio: { systemAudio: 'include' }
+        audio: {
+          systemAudio: 'include',
+          echoCancellation: false,     // Don't process system audio
+          noiseSuppression: false,     // Keep original quality
+          autoGainControl: false       // Don't normalize volume
+        }
       });
 
       const videoTracks = displayStream.getVideoTracks();
@@ -258,7 +264,13 @@ class ContinuousRecorder {
       if (this.el('microphone').checked) {
         try {
           const micStream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true }
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              sampleRate: 48000,        // High quality sample rate
+              channelCount: 2           // Stereo audio
+            }
           });
           micTracks = micStream.getAudioTracks();
         } catch (e) {
