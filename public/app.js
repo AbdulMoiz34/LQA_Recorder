@@ -38,6 +38,7 @@ class ContinuousRecorder {
     });
 
     this.el('start').addEventListener('click', () => this.startRecording());
+    this.el('stop').addEventListener('click', () => this.stopRecording());
     
     window.addEventListener('beforeunload', (e) => {
       if (this.isRecording) {
@@ -208,7 +209,7 @@ class ContinuousRecorder {
     };
 
     this.recorder.onstop = () => {
-      if (this.isRecording && this.recordedChunks.length > 0) {
+      if (this.recordedChunks.length > 0) {
         const blob = new Blob(this.recordedChunks, { type: this.currentMimeType });
         const sizeMB = (blob.size / (1024 * 1024)).toFixed(2);
         console.log(`📦 Segment ${this.segmentNumber} complete: ${sizeMB}MB`);
@@ -300,6 +301,7 @@ class ContinuousRecorder {
       videoTracks[0].addEventListener('ended', () => this.stopRecording());
 
       this.el('start').disabled = true;
+      this.el('stop').disabled = false;
       this.el('device').disabled = true;
       this.el('microphone').disabled = true;
       this.el('segments').textContent = '0';
@@ -339,6 +341,7 @@ class ContinuousRecorder {
     this.recorder = null;
 
     this.el('start').disabled = false;
+    this.el('stop').disabled = true;
     this.el('device').disabled = false;
     this.el('microphone').disabled = false;
     this.el('pending').textContent = 'Stopped';
